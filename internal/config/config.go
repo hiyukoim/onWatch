@@ -551,6 +551,9 @@ func (c *Config) AvailableProviders() []string {
 	if c.CursorToken != "" {
 		providers = append(providers, "cursor")
 	}
+	if c.APIIntegrationsEnabled {
+		providers = append(providers, "opencode")
+	}
 	return providers
 }
 
@@ -577,6 +580,8 @@ func (c *Config) HasProvider(name string) bool {
 		return c.GeminiEnabled
 	case "cursor":
 		return c.CursorToken != ""
+	case "opencode":
+		return c.APIIntegrationsEnabled
 	}
 	return false
 }
@@ -612,6 +617,9 @@ func (c *Config) HasMultipleProviders() bool {
 		count++
 	}
 	if c.CursorToken != "" {
+		count++
+	}
+	if c.APIIntegrationsEnabled {
 		count++
 	}
 	return count > 1

@@ -92,6 +92,7 @@ type Handler struct {
 	geminiTracker      *tracker.GeminiTracker
 	openrouterTracker  *tracker.OpenRouterTracker
 	cursorTracker      *tracker.CursorTracker
+	opencodeTracker    *tracker.OpenCodeTracker
 	updater            *update.Updater
 	notifier           Notifier
 	agentManager       ProviderAgentController
@@ -817,6 +818,11 @@ func (h *Handler) SetCursorTracker(t *tracker.CursorTracker) {
 	h.cursorTracker = t
 }
 
+// SetOpenCodeTracker sets the OpenCode tracker for usage summary enrichment.
+func (h *Handler) SetOpenCodeTracker(t *tracker.OpenCodeTracker) {
+	h.opencodeTracker = t
+}
+
 // SetAgentManager sets provider agent lifecycle controller.
 func (h *Handler) SetAgentManager(m ProviderAgentController) {
 	h.agentManager = m
@@ -1152,6 +1158,7 @@ func providerCatalog() []providerCatalogItem {
 		{Key: "openrouter", Name: "OpenRouter", Description: "OpenRouter credits usage tracking"},
 		{Key: "gemini", Name: "Gemini", Description: "Google Gemini CLI quota tracking", AutoDetectable: true},
 		{Key: "cursor", Name: "Cursor", Description: "Cursor usage and quota tracking", AutoDetectable: true},
+		{Key: "opencode", Name: "OpenCode", Description: "OpenCode Go quota tracking", AutoDetectable: true},
 	}
 }
 
@@ -1830,6 +1837,8 @@ func (h *Handler) Current(w http.ResponseWriter, r *http.Request) {
 		h.currentGemini(w, r)
 	case "cursor":
 		h.currentCursor(w, r)
+	case "opencode":
+		h.currentOpenCode(w, r)
 	default:
 		respondError(w, http.StatusBadRequest, fmt.Sprintf("unknown provider: %s", provider))
 	}
@@ -1838,6 +1847,12 @@ func (h *Handler) Current(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) currentCursor(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	response := h.buildCursorCurrent()
+	json.NewEncoder(w).Encode(response)
+}
+
+func (h *Handler) currentOpenCode(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	response := h.buildOpenCodeCurrent()
 	json.NewEncoder(w).Encode(response)
 }
 
@@ -1907,6 +1922,9 @@ func (h *Handler) currentBoth(w http.ResponseWriter, r *http.Request) {
 	}
 	if h.config.HasProvider("cursor") && providerTelemetryEnabled(visibility, "cursor") {
 		response["cursor"] = h.buildCursorCurrent()
+	}
+	if h.config.HasProvider("opencode") && providerTelemetryEnabled(visibility, "opencode") {
+		response["opencode"] = h.buildOpenCodeCurrent()
 	}
 	respondJSON(w, http.StatusOK, response)
 }
@@ -2250,6 +2268,8 @@ func (h *Handler) History(w http.ResponseWriter, r *http.Request) {
 		h.historyGemini(w, r)
 	case "cursor":
 		h.historyCursor(w, r)
+	case "opencode":
+		h.historyOpenCode(w, r)
 	default:
 		respondError(w, http.StatusBadRequest, fmt.Sprintf("unknown provider: %s", provider))
 	}
@@ -3165,6 +3185,8 @@ func (h *Handler) Cycles(w http.ResponseWriter, r *http.Request) {
 		h.cyclesGemini(w, r)
 	case "cursor":
 		h.cyclesCursor(w, r)
+	case "opencode":
+		h.cyclesOpenCode(w, r)
 	default:
 		respondError(w, http.StatusBadRequest, fmt.Sprintf("unknown provider: %s", provider))
 	}
@@ -3484,6 +3506,8 @@ func (h *Handler) Summary(w http.ResponseWriter, r *http.Request) {
 		h.summaryGemini(w, r)
 	case "cursor":
 		h.summaryCursor(w, r)
+	case "opencode":
+		h.summaryOpenCode(w, r)
 	default:
 		respondError(w, http.StatusBadRequest, fmt.Sprintf("unknown provider: %s", provider))
 	}
@@ -4280,6 +4304,8 @@ func (h *Handler) Insights(w http.ResponseWriter, r *http.Request) {
 		h.insightsGemini(w, r, rangeDur)
 	case "cursor":
 		h.insightsCursor(w, r, rangeDur)
+	case "opencode":
+		h.insightsOpenCode(w, r, rangeDur)
 	default:
 		respondError(w, http.StatusBadRequest, fmt.Sprintf("unknown provider: %s", provider))
 	}
@@ -6697,6 +6723,8 @@ func (h *Handler) CycleOverview(w http.ResponseWriter, r *http.Request) {
 		h.cycleOverviewGemini(w, r)
 	case "cursor":
 		h.cycleOverviewCursor(w, r)
+	case "opencode":
+		h.cycleOverviewOpenCode(w, r)
 	default:
 		respondError(w, http.StatusBadRequest, fmt.Sprintf("unknown provider: %s", provider))
 	}
@@ -10191,6 +10219,8 @@ func (h *Handler) LoggingHistory(w http.ResponseWriter, r *http.Request) {
 		h.loggingHistoryGemini(w, r)
 	case "cursor":
 		h.loggingHistoryCursor(w, r)
+	case "opencode":
+		h.loggingHistoryOpenCode(w, r)
 	default:
 		respondError(w, http.StatusBadRequest, fmt.Sprintf("unknown provider: %s", provider))
 	}
