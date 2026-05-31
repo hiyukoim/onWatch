@@ -1158,7 +1158,7 @@ func providerCatalog() []providerCatalogItem {
 		{Key: "openrouter", Name: "OpenRouter", Description: "OpenRouter credits usage tracking"},
 		{Key: "gemini", Name: "Gemini", Description: "Google Gemini CLI quota tracking", AutoDetectable: true},
 		{Key: "cursor", Name: "Cursor", Description: "Cursor usage and quota tracking", AutoDetectable: true},
-		{Key: "opencode", Name: "OpenCode", Description: "OpenCode Go quota tracking", AutoDetectable: true},
+		{Key: "opencode", Name: "OpenCode Go", Description: "OpenCode Go quota tracking", AutoDetectable: false},
 	}
 }
 
@@ -1218,6 +1218,8 @@ func (h *Handler) isProviderConfigured(provider string) bool {
 		return h.config.GeminiEnabled
 	case "cursor":
 		return strings.TrimSpace(h.config.CursorToken) != "" || strings.TrimSpace(api.DetectCursorToken(h.logger)) != ""
+	case "opencode":
+		return strings.TrimSpace(h.config.OpenCodeGoWorkspaceID) != "" && strings.TrimSpace(h.config.OpenCodeGoAuthCookie) != ""
 	default:
 		return false
 	}
@@ -1356,9 +1358,10 @@ func applyProviderConfig(dst, src *config.Config) {
 // and replaced with a "{key}_set: true" flag so the UI can show status
 // without exposing the actual values.
 var providerSecretKeys = map[string]bool{
-	"api_key":    true,
-	"token":      true,
-	"csrf_token": true,
+	"api_key":     true,
+	"token":       true,
+	"csrf_token":  true,
+	"auth_cookie": true,
 }
 
 // stripProviderSecrets removes sensitive field values from provider_settings
@@ -1416,6 +1419,9 @@ var providerEnumFields = map[string]map[string][]string{
 		"display_mode": {"usage", "available"},
 	},
 	"cursor": {
+		"display_mode": {"usage", "available"},
+	},
+	"opencode": {
 		"display_mode": {"usage", "available"},
 	},
 }
@@ -1504,6 +1510,14 @@ func ApplyProviderSettingsFromDB(st *store.Store, cfg *config.Config, logger *sl
 		}
 		if token, _ := s["csrf_token"].(string); token != "" {
 			cfg.AntigravityCSRFToken = token
+		}
+	}
+	if s := provSettings["opencode"]; s != nil {
+		if id, _ := s["workspace_id"].(string); id != "" {
+			cfg.OpenCodeGoWorkspaceID = id
+		}
+		if cookie, _ := s["auth_cookie"].(string); cookie != "" {
+			cfg.OpenCodeGoAuthCookie = cookie
 		}
 	}
 

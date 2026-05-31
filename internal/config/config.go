@@ -71,6 +71,10 @@ type Config struct {
 	APIIntegrationsDir       string        // ONWATCH_API_INTEGRATIONS_DIR (default: ~/.onwatch/api-integrations or /data/api-integrations)
 	APIIntegrationsRetention time.Duration // ONWATCH_API_INTEGRATIONS_RETENTION (example: 720h, 0 disables pruning)
 
+	// OpenCode provider configuration
+	OpenCodeGoWorkspaceID string // OPENCODE_GO_WORKSPACE_ID
+	OpenCodeGoAuthCookie  string // OPENCODE_GO_AUTH_COOKIE
+
 	// Shared configuration
 	PollInterval       time.Duration // ONWATCH_POLL_INTERVAL (seconds → Duration)
 	Port               int           // ONWATCH_PORT
@@ -203,6 +207,8 @@ var onwatchEnvKeys = []string{
 	"GEMINI_ENABLED",
 	"GEMINI_REFRESH_TOKEN",
 	"GEMINI_ACCESS_TOKEN",
+	"OPENCODE_GO_WORKSPACE_ID",
+	"OPENCODE_GO_AUTH_COOKIE",
 	"ONWATCH_",
 }
 
@@ -341,6 +347,10 @@ func loadFromEnvAndFlags(flags *flagValues) (*Config, error) {
 			cfg.APIIntegrationsRetention = v
 		}
 	}
+
+	// OpenCode provider
+	cfg.OpenCodeGoWorkspaceID = strings.TrimSpace(os.Getenv("OPENCODE_GO_WORKSPACE_ID"))
+	cfg.OpenCodeGoAuthCookie = strings.TrimSpace(os.Getenv("OPENCODE_GO_AUTH_COOKIE"))
 
 	// Poll Interval (seconds) - ONWATCH_* first, SYNTRACK_* fallback
 	if flags.interval > 0 {
@@ -552,6 +562,9 @@ func (c *Config) AvailableProviders() []string {
 		providers = append(providers, "cursor")
 	}
 	if c.APIIntegrationsEnabled {
+		providers = append(providers, "api_integrations")
+	}
+	if c.OpenCodeGoAuthCookie != "" || c.OpenCodeGoWorkspaceID != "" {
 		providers = append(providers, "opencode")
 	}
 	return providers
@@ -580,8 +593,10 @@ func (c *Config) HasProvider(name string) bool {
 		return c.GeminiEnabled
 	case "cursor":
 		return c.CursorToken != ""
-	case "opencode":
+	case "api_integrations":
 		return c.APIIntegrationsEnabled
+	case "opencode":
+		return c.OpenCodeGoAuthCookie != ""
 	}
 	return false
 }
@@ -620,6 +635,9 @@ func (c *Config) HasMultipleProviders() bool {
 		count++
 	}
 	if c.APIIntegrationsEnabled {
+		count++
+	}
+	if c.OpenCodeGoAuthCookie != "" {
 		count++
 	}
 	return count > 1
@@ -664,6 +682,11 @@ func (c *Config) String() string {
 	fmt.Fprintf(&sb, "  APIIntegrationsEnabled: %v,\n", c.APIIntegrationsEnabled)
 	fmt.Fprintf(&sb, "  APIIntegrationsDir: %s,\n", c.APIIntegrationsDir)
 	fmt.Fprintf(&sb, "  APIIntegrationsRetention: %v,\n", c.APIIntegrationsRetention)
+
+	// Redact OpenCode cookie
+	opencodeDisplay := redactAPIKey(c.OpenCodeGoAuthCookie, "")
+	fmt.Fprintf(&sb, "  OpenCodeGoWorkspaceID: %s,\n", c.OpenCodeGoWorkspaceID)
+	fmt.Fprintf(&sb, "  OpenCodeGoAuthCookie: %s,\n", opencodeDisplay)
 
 	// Redact Cursor token
 	cursorDisplay := redactAPIKey(c.CursorToken, "")
