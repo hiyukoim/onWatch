@@ -5,13 +5,13 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"os"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/onllm-dev/onwatch/v2/internal/api"
+	"github.com/onllm-dev/onwatch/v2/internal/config"
 	"github.com/onllm-dev/onwatch/v2/internal/notify"
 	"github.com/onllm-dev/onwatch/v2/internal/store"
 )
@@ -23,6 +23,7 @@ type OpenCodeAgent struct {
 	sm           *SessionManager
 	notifier     *notify.NotificationEngine
 	pollingCheck func() bool
+	cfg          *config.Config
 }
 
 func (a *OpenCodeAgent) SetPollingCheck(fn func() bool) {
@@ -33,12 +34,13 @@ func (a *OpenCodeAgent) SetNotifier(n *notify.NotificationEngine) {
 	a.notifier = n
 }
 
-func NewOpenCodeAgent(store *store.Store, interval time.Duration, logger *slog.Logger, sm *SessionManager) *OpenCodeAgent {
+func NewOpenCodeAgent(store *store.Store, cfg *config.Config, interval time.Duration, logger *slog.Logger, sm *SessionManager) *OpenCodeAgent {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return &OpenCodeAgent{
 		store:    store,
+		cfg:      cfg,
 		interval: interval,
 		logger:   logger,
 		sm:       sm,
@@ -137,11 +139,11 @@ func (a *OpenCodeAgent) FetchQuotas(ctx context.Context) (*api.OpenCodeSnapshot,
 	provider := "opencode-go"
 	now := time.Now()
 
-	workspaceID := os.Getenv("OPENCODE_GO_WORKSPACE_ID")
+	workspaceID := a.cfg.OpenCodeGoWorkspaceID
 	if workspaceID == "" {
 		workspaceID = "wrk_01KSR37ZXSEMBNMEX0YDN7TV6H" // fallback to user's provided workspace
 	}
-	authCookie := os.Getenv("OPENCODE_GO_AUTH_COOKIE")
+	authCookie := a.cfg.OpenCodeGoAuthCookie
 
 	if workspaceID != "" && authCookie != "" {
 		url := "https://opencode.ai/workspace/" + workspaceID + "/go"
