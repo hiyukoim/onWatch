@@ -40,14 +40,19 @@ type Config struct {
 	// Codex provider configuration
 	CodexToken         string // CODEX_TOKEN or auto-detected
 	CodexAutoToken     bool   // true if token was auto-detected
+	CodexAutoSource    string // "codex" | "opencode" when auto-detected (display/logging)
 	CodexHasProfiles   bool   // true if saved profiles exist (enables bootstrap without token)
+	OpenCodeEnabled    bool   // OPENCODE_ENABLED=true: track ChatGPT via OpenCode auth.json (feeds Codex)
 	CodexShowAvailable string // CODEX_SHOW_AVAILABLE: "usage" | "available", default "usage" (Codex-specific override)
+	CodexAutoStart5h   bool   // CODEX_AUTO_START_5H: auto-send a starter ping when the 5h window resets (Beta, default off)
+	CodexAutoStart7d   bool   // CODEX_AUTO_START_7D: auto-send a starter ping when the weekly window resets (Beta, default off)
 	DisplayMode        string // ONWATCH_DISPLAY_MODE: "usage" | "available", default "usage" (global, applies to all providers)
 
 	// Antigravity provider configuration (auto-detected from local process)
 	AntigravityBaseURL   string // ANTIGRAVITY_BASE_URL (for Docker)
 	AntigravityCSRFToken string // ANTIGRAVITY_CSRF_TOKEN (for Docker)
 	AntigravityEnabled   bool   // true if auto-detection should be attempted
+	AntigravitySource    string // ANTIGRAVITY_SOURCE: "ide" | "cli" | "both" (default "both")
 
 	// MiniMax provider configuration
 	MiniMaxAPIKey string // MINIMAX_API_KEY
@@ -66,6 +71,11 @@ type Config struct {
 	CursorToken     string // CURSOR_TOKEN or auto-detected
 	CursorAutoToken bool   // true if token was auto-detected
 
+	// Grok provider configuration (auto-detected from ~/.grok/auth.json or $GROK_HOME/auth.json)
+	GrokToken     string // GROK_TOKEN or auto-detected bearer from auth.json
+	GrokAutoToken bool   // true if token was auto-detected from local grok auth
+	GrokEnabled   bool   // true if GROK_ENABLED=true or token present (unless explicitly false)
+
 	// Custom API Integrations telemetry ingestion
 	APIIntegrationsEnabled   bool          // ONWATCH_API_INTEGRATIONS_ENABLED (default: true)
 	APIIntegrationsDir       string        // ONWATCH_API_INTEGRATIONS_DIR (default: ~/.onwatch/api-integrations or /data/api-integrations)
@@ -83,7 +93,7 @@ type Config struct {
 	DBPathExplicit     bool          // true if user explicitly set --db or ONWATCH_DB_PATH
 	LogLevel           string        // ONWATCH_LOG_LEVEL
 	LogFormat          string        // ONWATCH_LOG_FORMAT: text (default), txt, fmt, or json
-	MetricsToken      string        // ONWATCH_METRICS_TOKEN (bearer token for /metrics endpoint)
+	MetricsToken       string        // ONWATCH_METRICS_TOKEN (bearer token for /metrics endpoint)
 	SessionIdleTimeout time.Duration // ONWATCH_SESSION_IDLE_TIMEOUT (seconds → Duration)
 	BasePath           string        // ONWATCH_BASE_PATH (subdirectory hosting, e.g. "/onwatch")
 	DebugMode          bool          // --debug flag (foreground mode)
@@ -196,10 +206,15 @@ var onwatchEnvKeys = []string{
 	"ANTHROPIC_TOKEN",
 	"COPILOT_TOKEN",
 	"CODEX_TOKEN",
+	"OPENCODE_ENABLED",
+	"OPENCODE_HOME",
 	"ANTIGRAVITY_ENABLED",
 	"MINIMAX_API_KEY",
 	"OPENROUTER_API_KEY",
 	"CURSOR_TOKEN",
+	"GROK_TOKEN",
+	"GROK_ENABLED",
+	"GROK_HOME",
 	"GEMINI_ENABLED",
 	"GEMINI_REFRESH_TOKEN",
 	"GEMINI_ACCESS_TOKEN",
@@ -289,6 +304,12 @@ func loadFromEnvAndFlags(flags *flagValues) (*Config, error) {
 	if cfg.CodexShowAvailable != "usage" && cfg.CodexShowAvailable != "available" {
 		cfg.CodexShowAvailable = "usage"
 	}
+	// OpenCode feeds the Codex provider using ChatGPT OAuth stored by OpenCode.
+	cfg.OpenCodeEnabled = os.Getenv("OPENCODE_ENABLED") == "true"
+	// Codex auto quota-starter (Beta): default off; the dashboard toggle in
+	// provider_settings overrides these env-provided defaults at runtime.
+	cfg.CodexAutoStart5h = os.Getenv("CODEX_AUTO_START_5H") == "true"
+	cfg.CodexAutoStart7d = os.Getenv("CODEX_AUTO_START_7D") == "true"
 
 	// Global display mode (applies to all providers unless per-provider override)
 	cfg.DisplayMode = strings.ToLower(strings.TrimSpace(os.Getenv("ONWATCH_DISPLAY_MODE")))
@@ -302,6 +323,15 @@ func loadFromEnvAndFlags(flags *flagValues) (*Config, error) {
 	// Enable Antigravity if: (1) manual config provided, or (2) ANTIGRAVITY_ENABLED=true, or (3) auto-detect
 	if cfg.AntigravityBaseURL != "" || os.Getenv("ANTIGRAVITY_ENABLED") == "true" {
 		cfg.AntigravityEnabled = true
+	}
+	// Data source preference: "ide" | "cli" | "both" (default "both").
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("ANTIGRAVITY_SOURCE"))) {
+	case "ide":
+		cfg.AntigravitySource = "ide"
+	case "cli":
+		cfg.AntigravitySource = "cli"
+	default:
+		cfg.AntigravitySource = "both"
 	}
 
 	// MiniMax provider
@@ -326,6 +356,15 @@ func loadFromEnvAndFlags(flags *flagValues) (*Config, error) {
 
 	// Cursor provider (auto-detected from Cursor Desktop SQLite or keychain)
 	cfg.CursorToken = strings.TrimSpace(os.Getenv("CURSOR_TOKEN"))
+
+	// Grok provider (primary via ~/.grok/auth.json or GROK_HOME; explicit token for Docker)
+	cfg.GrokToken = strings.TrimSpace(os.Getenv("GROK_TOKEN"))
+	if os.Getenv("GROK_ENABLED") == "false" {
+		cfg.GrokEnabled = false
+	} else if os.Getenv("GROK_ENABLED") == "true" || cfg.GrokToken != "" {
+		cfg.GrokEnabled = true
+	}
+	// File-based auto-detection (DetectGrokCredentials) happens later in main.go preflight
 
 	// Custom API Integrations telemetry ingestion
 	cfg.APIIntegrationsDir = strings.TrimSpace(os.Getenv("ONWATCH_API_INTEGRATIONS_DIR"))
@@ -533,7 +572,7 @@ func (c *Config) AvailableProviders() []string {
 	if c.CopilotToken != "" {
 		providers = append(providers, "copilot")
 	}
-	if c.CodexToken != "" || c.CodexHasProfiles {
+	if c.CodexToken != "" || c.CodexHasProfiles || c.OpenCodeEnabled {
 		providers = append(providers, "codex")
 	}
 	if c.AntigravityEnabled {
@@ -551,6 +590,9 @@ func (c *Config) AvailableProviders() []string {
 	if c.CursorToken != "" {
 		providers = append(providers, "cursor")
 	}
+	if c.GrokToken != "" || c.GrokEnabled {
+		providers = append(providers, "grok")
+	}
 	return providers
 }
 
@@ -566,7 +608,7 @@ func (c *Config) HasProvider(name string) bool {
 	case "copilot":
 		return c.CopilotToken != ""
 	case "codex":
-		return c.CodexToken != "" || c.CodexHasProfiles
+		return c.CodexToken != "" || c.CodexHasProfiles || c.OpenCodeEnabled
 	case "antigravity":
 		return c.AntigravityEnabled
 	case "minimax":
@@ -577,6 +619,8 @@ func (c *Config) HasProvider(name string) bool {
 		return c.GeminiEnabled
 	case "cursor":
 		return c.CursorToken != ""
+	case "grok":
+		return c.GrokToken != "" || c.GrokEnabled
 	}
 	return false
 }
@@ -596,7 +640,7 @@ func (c *Config) HasMultipleProviders() bool {
 	if c.CopilotToken != "" {
 		count++
 	}
-	if c.CodexToken != "" || c.CodexHasProfiles {
+	if c.CodexToken != "" || c.CodexHasProfiles || c.OpenCodeEnabled {
 		count++
 	}
 	if c.AntigravityEnabled {
@@ -612,6 +656,9 @@ func (c *Config) HasMultipleProviders() bool {
 		count++
 	}
 	if c.CursorToken != "" {
+		count++
+	}
+	if c.GrokToken != "" || c.GrokEnabled {
 		count++
 	}
 	return count > 1
@@ -662,6 +709,16 @@ func (c *Config) String() string {
 	fmt.Fprintf(&sb, "  CursorToken: %s,\n", cursorDisplay)
 	if c.CursorAutoToken {
 		fmt.Fprintf(&sb, "  CursorAutoToken: true,\n")
+	}
+
+	// Redact Grok token
+	grokDisplay := redactAPIKey(c.GrokToken, "")
+	fmt.Fprintf(&sb, "  GrokToken: %s,\n", grokDisplay)
+	if c.GrokAutoToken {
+		fmt.Fprintf(&sb, "  GrokAutoToken: true,\n")
+	}
+	if c.GrokEnabled {
+		fmt.Fprintf(&sb, "  GrokEnabled: true,\n")
 	}
 
 	fmt.Fprintf(&sb, "  PollInterval: %v,\n", c.PollInterval)

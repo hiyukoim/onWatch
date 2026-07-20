@@ -513,9 +513,15 @@ func run() error {
 		}
 	}
 	if cfg.CodexToken == "" {
-		if token := api.DetectCodexToken(preflightLogger); token != "" {
-			cfg.CodexToken = token
+		if creds := api.DetectCodexCredentials(preflightLogger); creds != nil && creds.AccessToken != "" {
+			cfg.CodexToken = creds.AccessToken
 			cfg.CodexAutoToken = true
+			if creds.Source == api.CredentialSourceOpenCode {
+				cfg.CodexAutoSource = "opencode"
+				cfg.OpenCodeEnabled = true
+			} else {
+				cfg.CodexAutoSource = "codex"
+			}
 		}
 	}
 
@@ -561,6 +567,17 @@ func run() error {
 		if token := api.DetectCursorToken(preflightLogger); token != "" {
 			cfg.CursorToken = token
 			cfg.CursorAutoToken = true
+		}
+	}
+
+	// Grok provider auto-detect from ~/.grok/auth.json (or $GROK_HOME). Explicit GROK_TOKEN wins in config.
+	if os.Getenv("GROK_ENABLED") != "false" {
+		if creds := api.DetectGrokCredentials(preflightLogger); creds != nil && creds.AccessToken != "" {
+			if cfg.GrokToken == "" {
+				cfg.GrokToken = creds.AccessToken
+				cfg.GrokAutoToken = true
+			}
+			cfg.GrokEnabled = true
 		}
 	}
 
@@ -726,7 +743,11 @@ func run() error {
 		logger.Info("Auto-detected Anthropic token from Claude Code credentials")
 	}
 	if cfg.CodexAutoToken {
-		logger.Info("Auto-detected Codex token from Codex credentials")
+		if cfg.CodexAutoSource == "opencode" {
+			logger.Info("Auto-detected ChatGPT token from OpenCode credentials")
+		} else {
+			logger.Info("Auto-detected Codex token from Codex credentials")
+		}
 	}
 
 	// Apply provider_settings from DB (UI-configured keys/regions override .env)
@@ -826,6 +847,12 @@ func run() error {
 	if cfg.HasProvider("cursor") {
 		cursorClient = api.NewCursorClient(cfg.CursorToken, logger)
 		logger.Info("Cursor API client configured")
+	}
+
+	var grokClient *api.GrokClient
+	if cfg.HasProvider("grok") {
+		grokClient = api.NewGrokClient(cfg.GrokToken, logger)
+		logger.Info("Grok API client configured")
 	}
 
 	// Create components
@@ -994,6 +1021,11 @@ func run() error {
 		cursorTr = tracker.NewCursorTracker(db, logger)
 	}
 
+	var grokTr *tracker.GrokTracker
+	if cfg.HasProvider("grok") {
+		grokTr = tracker.NewGrokTracker(db, logger)
+	}
+
 	var antigravityAg *agent.AntigravityAgent
 	if antigravityClient != nil {
 		antigravitySm := agent.NewSessionManager(db, "antigravity", idleTimeout, logger)
@@ -1052,6 +1084,12 @@ func run() error {
 		})
 	}
 
+	var grokAg *agent.GrokAgent
+	if grokClient != nil {
+		grokSm := agent.NewSessionManager(db, "grok", idleTimeout, logger)
+		grokAg = agent.NewGrokAgent(grokClient, db, grokTr, cfg.PollInterval, logger, grokSm)
+	}
+
 	var apiIntegrationsAg *agent.APIIntegrationsIngestAgent
 	if cfg.APIIntegrationsEnabled {
 		apiIntegrationsAg = agent.NewAPIIntegrationsIngestAgent(db, cfg.APIIntegrationsDir, cfg.APIIntegrationsRetention, logger)
@@ -1095,6 +1133,9 @@ func run() error {
 	}
 	if cursorAg != nil {
 		cursorAg.SetNotifier(notifier)
+	}
+	if grokAg != nil {
+		grokAg.SetNotifier(notifier)
 	}
 
 	// Wire polling checks - agents skip poll when telemetry disabled
@@ -1158,9 +1199,53 @@ func run() error {
 			}
 			return true
 		})
+		// Auto quota-starter (Beta): enablement is read fresh from provider_settings
+		// each poll, so a dashboard toggle takes effect without a daemon restart.
+		// Falls back to the env defaults. The agent fires when it observes a window
+		// in the unstarted state (reset countdown pinned at ~the full window).
+		codexMgr.SetAutoStartCheck(func(quotaName string) bool {
+			field := ""
+			fallback := false
+			switch quotaName {
+			case "five_hour":
+				field, fallback = "auto_start_5h", cfg.CodexAutoStart5h
+			case "seven_day":
+				field, fallback = "auto_start_7d", cfg.CodexAutoStart7d
+			default:
+				return false
+			}
+			v, err := db.GetSetting("provider_settings")
+			if err == nil && v != "" {
+				var ps map[string]map[string]interface{}
+				if json.Unmarshal([]byte(v), &ps) == nil {
+					if codex, ok := ps["codex"]; ok {
+						if setting, ok := codex[field].(string); ok && setting != "" {
+							return setting == "on"
+						}
+					}
+				}
+			}
+			return fallback
+		})
 	}
 	if antigravityAg != nil {
 		antigravityAg.SetPollingCheck(func() bool { return isPollingEnabled("antigravity") })
+		// Source preference is read fresh each poll so a settings-UI change
+		// (ide/cli/both) takes effect without a daemon restart.
+		antigravityAg.SetSourceCheck(func() string {
+			v, err := db.GetSetting("provider_settings")
+			if err == nil && v != "" {
+				var ps map[string]map[string]interface{}
+				if json.Unmarshal([]byte(v), &ps) == nil {
+					if ag, ok := ps["antigravity"]; ok {
+						if src, ok := ag["source"].(string); ok && src != "" {
+							return src
+						}
+					}
+				}
+			}
+			return cfg.AntigravitySource
+		})
 	}
 	if minimaxMgr != nil {
 		minimaxMgr.SetPollingCheck(func() bool { return isPollingEnabled("minimax") })
@@ -1199,6 +1284,9 @@ func run() error {
 	}
 	if cursorAg != nil {
 		cursorAg.SetPollingCheck(func() bool { return isPollingEnabled("cursor") })
+	}
+	if grokAg != nil {
+		grokAg.SetPollingCheck(func() bool { return isPollingEnabled("grok") })
 	}
 
 	// Wire reset callbacks to trackers
@@ -1250,6 +1338,11 @@ func run() error {
 			notifier.Check(notify.QuotaStatus{Provider: "cursor", QuotaKey: quotaName, ResetOccurred: true})
 		})
 	}
+	if grokTr != nil {
+		grokTr.SetOnReset(func(quotaName string) {
+			notifier.Check(notify.QuotaStatus{Provider: "grok", QuotaKey: quotaName, ResetOccurred: true})
+		})
+	}
 
 	handler := web.NewHandler(db, tr, logger, nil, cfg, zaiTr)
 	handler.SetVersion(version)
@@ -1277,6 +1370,9 @@ func run() error {
 	}
 	if cursorTr != nil {
 		handler.SetCursorTracker(cursorTr)
+	}
+	if grokTr != nil {
+		handler.SetGrokTracker(grokTr)
 	}
 	agentMgr := agent.NewAgentManager(logger)
 	if ag != nil {
@@ -1309,6 +1405,9 @@ func run() error {
 	if cursorAg != nil {
 		agentMgr.RegisterFactory("cursor", func() (agent.AgentRunner, error) { return cursorAg, nil })
 	}
+	if grokAg != nil {
+		agentMgr.RegisterFactory("grok", func() (agent.AgentRunner, error) { return grokAg, nil })
+	}
 
 	if apiIntegrationsAg != nil {
 		agentMgr.RegisterFactory("api_integrations", func() (agent.AgentRunner, error) { return apiIntegrationsAg, nil })
@@ -1335,7 +1434,7 @@ func run() error {
 
 	// Start configured agents through the manager.
 	startedAny := false
-	for _, providerKey := range []string{"synthetic", "zai", "anthropic", "copilot", "codex", "antigravity", "minimax", "openrouter", "gemini", "cursor"} {
+	for _, providerKey := range []string{"synthetic", "zai", "anthropic", "copilot", "codex", "antigravity", "minimax", "openrouter", "gemini", "cursor", "grok"} {
 		if !isPollingEnabled(providerKey) {
 			continue
 		}
@@ -1816,7 +1915,9 @@ func printBanner(cfg *config.Config, version string) {
 		fmt.Println("║  API:       github.com/copilot (β)   ║")
 	}
 	if cfg.HasProvider("codex") {
-		if cfg.CodexAutoToken {
+		if cfg.CodexAutoSource == "opencode" {
+			fmt.Println("║  API:       chatgpt.com/wham (oc)    ║")
+		} else if cfg.CodexAutoToken {
 			fmt.Println("║  API:       chatgpt.com/wham (auto)  ║")
 		} else {
 			fmt.Println("║  API:       chatgpt.com/wham         ║")
@@ -1861,7 +1962,9 @@ func printBanner(cfg *config.Config, version string) {
 	}
 	if cfg.HasProvider("codex") {
 		label := "Codex Token:       "
-		if cfg.CodexAutoToken {
+		if cfg.CodexAutoSource == "opencode" {
+			label = "Codex (OpenCode):  "
+		} else if cfg.CodexAutoToken {
 			label = "Codex (auto):      "
 		}
 		fmt.Printf("%s%s\n", label, redactAPIKey(cfg.CodexToken))
