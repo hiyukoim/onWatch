@@ -43,6 +43,9 @@ type Config struct {
 	CodexAutoSource    string // "codex" | "opencode" when auto-detected (display/logging)
 	CodexHasProfiles   bool   // true if saved profiles exist (enables bootstrap without token)
 	OpenCodeEnabled    bool   // OPENCODE_ENABLED=true: track ChatGPT via OpenCode auth.json (feeds Codex)
+	// OpenCode Go provider configuration
+	OpenCodeGoWorkspaceID string // OPENCODE_GO_WORKSPACE_ID
+	OpenCodeGoAuthCookie  string // OPENCODE_GO_AUTH_COOKIE
 	CodexShowAvailable string // CODEX_SHOW_AVAILABLE: "usage" | "available", default "usage" (Codex-specific override)
 	CodexAutoStart5h   bool   // CODEX_AUTO_START_5H: auto-send a starter ping when the 5h window resets (Beta, default off)
 	CodexAutoStart7d   bool   // CODEX_AUTO_START_7D: auto-send a starter ping when the weekly window resets (Beta, default off)
@@ -218,6 +221,8 @@ var onwatchEnvKeys = []string{
 	"COPILOT_TOKEN",
 	"CODEX_TOKEN",
 	"OPENCODE_ENABLED",
+	"OPENCODE_GO_WORKSPACE_ID",
+	"OPENCODE_GO_AUTH_COOKIE",
 	"OPENCODE_HOME",
 	"ANTIGRAVITY_ENABLED",
 	"MINIMAX_API_KEY",
@@ -329,6 +334,8 @@ func loadFromEnvAndFlags(flags *flagValues) (*Config, error) {
 	}
 	// OpenCode feeds the Codex provider using ChatGPT OAuth stored by OpenCode.
 	cfg.OpenCodeEnabled = os.Getenv("OPENCODE_ENABLED") == "true"
+	cfg.OpenCodeGoWorkspaceID = strings.TrimSpace(os.Getenv("OPENCODE_GO_WORKSPACE_ID"))
+	cfg.OpenCodeGoAuthCookie = strings.TrimSpace(os.Getenv("OPENCODE_GO_AUTH_COOKIE"))
 	// Codex auto quota-starter (Beta): default off; the dashboard toggle in
 	// provider_settings overrides these env-provided defaults at runtime.
 	cfg.CodexAutoStart5h = os.Getenv("CODEX_AUTO_START_5H") == "true"
@@ -647,6 +654,9 @@ func (c *Config) AvailableProviders() []string {
 	if c.KimiToken != "" || c.KimiEnabled {
 		providers = append(providers, "kimi")
 	}
+	if c.OpenCodeGoWorkspaceID != "" && c.OpenCodeGoAuthCookie != "" {
+		providers = append(providers, "opencode")
+	}
 	return providers
 }
 
@@ -681,6 +691,8 @@ func (c *Config) HasProvider(name string) bool {
 		return c.GrokToken != "" || c.GrokEnabled
 	case "kimi":
 		return c.KimiToken != "" || c.KimiEnabled
+	case "opencode":
+		return c.OpenCodeGoWorkspaceID != "" && c.OpenCodeGoAuthCookie != ""
 	}
 	return false
 }
@@ -728,6 +740,9 @@ func (c *Config) HasMultipleProviders() bool {
 		count++
 	}
 	if c.KimiToken != "" || c.KimiEnabled {
+		count++
+	}
+	if c.OpenCodeGoWorkspaceID != "" && c.OpenCodeGoAuthCookie != "" {
 		count++
 	}
 	return count > 1
@@ -802,6 +817,9 @@ func (c *Config) String() string {
 	// Redact Kimi token
 	kimiDisplay := redactAPIKey(c.KimiToken, "")
 	fmt.Fprintf(&sb, "  KimiToken: %s,\n", kimiDisplay)
+	opencodeDisplay := redactAPIKey(c.OpenCodeGoAuthCookie, "")
+	fmt.Fprintf(&sb, "  OpenCodeGoWorkspaceID: %s,\n", c.OpenCodeGoWorkspaceID)
+	fmt.Fprintf(&sb, "  OpenCodeGoAuthCookie: %s,\n", opencodeDisplay)
 	if c.KimiAutoToken {
 		fmt.Fprintf(&sb, "  KimiAutoToken: true,\n")
 	}
