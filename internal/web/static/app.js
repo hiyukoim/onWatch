@@ -1158,6 +1158,11 @@ const renewalCategories = {
     { label: 'API Usage', groupBy: 'api_usage' },
     { label: 'Credits', groupBy: 'credits' },
     { label: 'On-Demand', groupBy: 'on_demand' }
+  ],
+  opencode: [
+    { label: '5-Hour', groupBy: 'five_hour' },
+    { label: 'Weekly', groupBy: 'weekly' },
+    { label: 'Monthly', groupBy: 'monthly' }
   ]
 };
 
@@ -10541,6 +10546,14 @@ const providerSettingsConfig = {
     desc: 'Gemini is auto-detected from your local credentials. Use the telemetry toggle to enable or disable tracking.',
     fields: [],
   },
+  opencode: {
+    title: 'OpenCode Go',
+    desc: 'Configure OpenCode Go quota tracking. Changes take effect after daemon restart.',
+    fields: [
+      { id: 'workspace_id', label: 'Workspace ID', type: 'text', placeholder: 'wrk_...', hint: 'Your OpenCode Go workspace ID. Overrides OPENCODE_GO_WORKSPACE_ID from .env.' },
+      { id: 'auth_cookie', label: 'Auth Cookie', type: 'password', placeholder: 'Not configured', hint: 'The auth cookie value required for scraping the dashboard. Overrides OPENCODE_GO_AUTH_COOKIE from .env.', sensitive: true },
+    ],
+  },
 };
 
 async function openProviderSettingsModal(providerKey) {
@@ -11550,6 +11563,11 @@ const _overrideQuotasByProvider = {
   zai: [
     { key: 'tokens', label: 'Tokens Limit' },
     { key: 'time', label: 'Time Limit' },
+  ],
+  opencode: [
+    { key: 'five_hour', label: '5-Hour Limit' },
+    { key: 'weekly', label: 'Weekly Limit' },
+    { key: 'monthly', label: 'Monthly Limit' },
   ],
 };
 

@@ -1375,9 +1375,10 @@ func applyProviderConfig(dst, src *config.Config) {
 // and replaced with a "{key}_set: true" flag so the UI can show status
 // without exposing the actual values.
 var providerSecretKeys = map[string]bool{
-	"api_key":    true,
-	"token":      true,
-	"csrf_token": true,
+	"api_key":     true,
+	"token":       true,
+	"csrf_token":  true,
+	"auth_cookie": true,
 }
 
 // stripProviderSecrets removes sensitive field values from provider_settings
@@ -3086,6 +3087,28 @@ func (h *Handler) historyBoth(w http.ResponseWriter, r *http.Request) {
 				kimiData = append(kimiData, entry)
 			}
 			response["kimi"] = kimiData
+		}
+	}
+
+	if h.config.HasProvider("opencode") && providerTelemetryEnabled(visibility, "opencode") && h.store != nil {
+		snapshots, err := h.store.QueryOpenCodeRange(start, now, 200)
+		if err == nil {
+			step := downsampleStep(len(snapshots), maxChartPoints)
+			last := len(snapshots) - 1
+			opencodeData := make([]map[string]interface{}, 0, min(len(snapshots), maxChartPoints))
+			for i, snap := range snapshots {
+				if step > 1 && i != 0 && i != last && i%step != 0 {
+					continue
+				}
+				entry := map[string]interface{}{
+					"capturedAt": snap.CapturedAt.Format(time.RFC3339),
+				}
+				for _, q := range snap.Quotas {
+					entry[q.Name] = q.Utilization
+				}
+				opencodeData = append(opencodeData, entry)
+			}
+			response["opencode"] = opencodeData
 		}
 	}
 
