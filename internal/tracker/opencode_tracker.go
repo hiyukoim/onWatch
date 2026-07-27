@@ -9,6 +9,8 @@ import (
 	"github.com/onllm-dev/onwatch/v2/internal/store"
 )
 
+const openCodeResetDriftTolerance = 90 * time.Minute
+
 type OpenCodeTracker struct {
 	store      *store.Store
 	logger     *slog.Logger
@@ -90,7 +92,9 @@ func (t *OpenCodeTracker) processQuota(quota api.OpenCodeQuota, capturedAt time.
 
 	resetDetected := false
 	resetReason := ""
-	if cycle.ResetsAt != nil && capturedAt.After(cycle.ResetsAt.Add(2*time.Minute)) {
+	storedResetPassed := cycle.ResetsAt != nil && capturedAt.After(cycle.ResetsAt.Add(2*time.Minute))
+	currentResetIsFuture := quota.ResetsAt != nil && quota.ResetsAt.After(capturedAt)
+	if storedResetPassed && !currentResetIsFuture {
 		resetDetected = true
 		resetReason = "time-based (stored ResetsAt passed)"
 	}
@@ -101,7 +105,7 @@ func (t *OpenCodeTracker) processQuota(quota api.OpenCodeQuota, capturedAt time.
 			if diff < 0 {
 				diff = -diff
 			}
-			if diff > 10*time.Minute {
+			if diff > openCodeResetDriftTolerance {
 				resetDetected = true
 				resetReason = "api-based (ResetsAt changed)"
 			}

@@ -138,6 +138,78 @@ func TestOpenCodeTracker_Process_ResetDetection(t *testing.T) {
 	}
 }
 
+func TestOpenCodeTracker_Process_IgnoresFallbackResetTimeDrift(t *testing.T) {
+	s := newTestOpenCodeStore(t)
+	tr := NewOpenCodeTracker(s, slog.Default())
+
+	now := time.Now().UTC()
+	resetsAt := now.Add(7 * 24 * time.Hour)
+	snap1 := &api.OpenCodeSnapshot{
+		CapturedAt: now,
+		Quotas: []api.OpenCodeQuota{
+			{Name: "weekly", Utilization: 30, Format: api.OpenCodeQuotaFormatPercent, ResetsAt: &resetsAt},
+		},
+	}
+	if err := tr.Process(snap1); err != nil {
+		t.Fatalf("Process snap1: %v", err)
+	}
+
+	driftedReset := resetsAt.Add(-59 * time.Minute)
+	snap2 := &api.OpenCodeSnapshot{
+		CapturedAt: now.Add(time.Minute),
+		Quotas: []api.OpenCodeQuota{
+			{Name: "weekly", Utilization: 31, Format: api.OpenCodeQuotaFormatPercent, ResetsAt: &driftedReset},
+		},
+	}
+	if err := tr.Process(snap2); err != nil {
+		t.Fatalf("Process snap2: %v", err)
+	}
+
+	history, err := s.QueryOpenCodeCycleHistory("weekly")
+	if err != nil {
+		t.Fatalf("QueryOpenCodeCycleHistory: %v", err)
+	}
+	if len(history) != 0 {
+		t.Fatalf("completed cycles = %d, want 0", len(history))
+	}
+}
+
+func TestOpenCodeTracker_Process_IgnoresExpiredStoredResetWithinDriftTolerance(t *testing.T) {
+	s := newTestOpenCodeStore(t)
+	tr := NewOpenCodeTracker(s, slog.Default())
+
+	now := time.Now().UTC()
+	storedReset := now.Add(time.Hour)
+	snap1 := &api.OpenCodeSnapshot{
+		CapturedAt: now,
+		Quotas: []api.OpenCodeQuota{
+			{Name: "weekly", Utilization: 30, Format: api.OpenCodeQuotaFormatPercent, ResetsAt: &storedReset},
+		},
+	}
+	if err := tr.Process(snap1); err != nil {
+		t.Fatalf("Process snap1: %v", err)
+	}
+
+	currentReset := storedReset.Add(59 * time.Minute)
+	snap2 := &api.OpenCodeSnapshot{
+		CapturedAt: storedReset.Add(3 * time.Minute),
+		Quotas: []api.OpenCodeQuota{
+			{Name: "weekly", Utilization: 31, Format: api.OpenCodeQuotaFormatPercent, ResetsAt: &currentReset},
+		},
+	}
+	if err := tr.Process(snap2); err != nil {
+		t.Fatalf("Process snap2: %v", err)
+	}
+
+	history, err := s.QueryOpenCodeCycleHistory("weekly")
+	if err != nil {
+		t.Fatalf("QueryOpenCodeCycleHistory: %v", err)
+	}
+	if len(history) != 0 {
+		t.Fatalf("completed cycles = %d, want 0", len(history))
+	}
+}
+
 func TestOpenCodeTracker_UsageSummary(t *testing.T) {
 	s := newTestOpenCodeStore(t)
 	tr := NewOpenCodeTracker(s, slog.Default())

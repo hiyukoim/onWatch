@@ -125,6 +125,30 @@ func TestOpenCodeClient_FetchSnapshot_401(t *testing.T) {
 	}
 }
 
+func TestOpenCodeClient_FetchSnapshot_RedirectIsUnauthorizedAndNotFollowed(t *testing.T) {
+	var redirectTargetHits int
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		redirectTargetHits++
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(ssrFixtureHTML))
+	}))
+	defer target.Close()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+"/login", http.StatusFound)
+	}))
+	defer srv.Close()
+
+	client := newTestOpenCodeClient(t, srv)
+	_, err := client.FetchSnapshot(context.Background(), "ws", "secret-cookie")
+	if !errors.Is(err, ErrOpenCodeUnauthorized) {
+		t.Fatalf("err = %v, want ErrOpenCodeUnauthorized", err)
+	}
+	if redirectTargetHits != 0 {
+		t.Fatalf("redirect target received %d request(s), want 0", redirectTargetHits)
+	}
+}
+
 func TestOpenCodeClient_FetchSnapshot_Malformed(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -151,22 +175,33 @@ func TestOpenCodeClient_FetchSnapshot_MissingConfig(t *testing.T) {
 	}
 }
 
-func TestOpenCodeClient_FetchSnapshot_CookieWithEquals(t *testing.T) {
-	var gotCookie string
+func TestOpenCodeClient_FetchSnapshot_CookieHeader(t *testing.T) {
+	var gotCookies []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotCookie = r.Header.Get("Cookie")
+		gotCookies = append(gotCookies, r.Header.Get("Cookie"))
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(ssrFixtureHTML))
 	}))
 	defer srv.Close()
 
 	client := newTestOpenCodeClient(t, srv)
-	_, err := client.FetchSnapshot(context.Background(), "ws", "auth=already-set")
-	if err != nil {
-		t.Fatalf("FetchSnapshot: %v", err)
-	}
-	if gotCookie != "auth=already-set" {
-		t.Errorf("cookie = %q, want auth=already-set", gotCookie)
+	for _, tt := range []struct {
+		name  string
+		value string
+		want  string
+	}{
+		{name: "prefixed", value: "auth=already-set", want: "auth=already-set"},
+		{name: "raw padded", value: "token==", want: "auth=token=="},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := client.FetchSnapshot(context.Background(), "ws", tt.value)
+			if err != nil {
+				t.Fatalf("FetchSnapshot: %v", err)
+			}
+			if got := gotCookies[len(gotCookies)-1]; got != tt.want {
+				t.Errorf("cookie = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 

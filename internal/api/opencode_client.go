@@ -33,8 +33,8 @@ var (
 )
 
 type OpenCodeClient struct {
-	httpClient  *http.Client
-	logger      *slog.Logger
+	httpClient         *http.Client
+	logger             *slog.Logger
 	dashboardURLPrefix string
 }
 
@@ -66,6 +66,9 @@ func NewOpenCodeClient(logger *slog.Logger, opts ...OpenCodeClientOption) *OpenC
 	c := &OpenCodeClient{
 		httpClient: &http.Client{
 			Timeout: openCodeScrapeTimeout,
+			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
 			Transport: &http.Transport{
 				MaxIdleConns:          1,
 				MaxIdleConnsPerHost:   1,
@@ -139,6 +142,9 @@ func (c *OpenCodeClient) fetchDashboardHTML(ctx context.Context, workspaceID, au
 	if err != nil {
 		return "", fmt.Errorf("%w: read body: %v", ErrOpenCodeNetworkError, err)
 	}
+	if resp.StatusCode >= http.StatusMultipleChoices && resp.StatusCode < http.StatusBadRequest {
+		return "", ErrOpenCodeUnauthorized
+	}
 
 	switch resp.StatusCode {
 	case http.StatusOK:
@@ -156,7 +162,7 @@ func (c *OpenCodeClient) fetchDashboardHTML(ctx context.Context, workspaceID, au
 }
 
 func openCodeAuthCookieHeader(authCookie string) string {
-	if strings.Contains(authCookie, "=") {
+	if strings.HasPrefix(authCookie, "auth=") {
 		return authCookie
 	}
 	return "auth=" + authCookie

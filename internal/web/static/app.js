@@ -3848,6 +3848,21 @@ function renderOpenCodeQuotaCards(quotas, containerId) {
     </article>`;
   }).join('');
 }
+
+function openCodeQuotaSetsMatch(container, quotas) {
+  if (!container || !Array.isArray(quotas)) return false;
+
+  const renderedCards = Array.from(container.querySelectorAll('.opencode-card[data-quota]'));
+  const hasRenderedState = renderedCards.length > 0 || container.querySelector('.empty-state') !== null;
+  if (!hasRenderedState) return false;
+
+  const renderedNames = new Set(renderedCards.map(card => card.dataset.quota));
+  const incomingNames = new Set(quotas.map(quota => quota && quota.name).filter(Boolean));
+  if (renderedCards.length !== incomingNames.size || renderedNames.size !== incomingNames.size) return false;
+
+  return Array.from(incomingNames).every(name => renderedNames.has(name));
+}
+
 function updateOpenCodeCard(quota) {
   const key = `opencode-${quota.name}`;
   const prev = State.currentQuotas[key];
@@ -4083,8 +4098,7 @@ async function fetchCurrent() {
       } else if (provider === 'opencode') {
         if (data.quotas) {
           const container = document.getElementById('quota-grid-opencode');
-          const hasCards = container && container.querySelector('.opencode-card') !== null;
-          if (container && !hasCards) {
+          if (container && !openCodeQuotaSetsMatch(container, data.quotas)) {
             renderOpenCodeQuotaCards(data.quotas, 'quota-grid-opencode');
           }
           if (Array.isArray(data.quotas) && data.quotas.length > 0) {

@@ -45,7 +45,7 @@ func TestOpenCodeAgent_Poll_FetchErrorNoInsert(t *testing.T) {
 		OpenCodeGoWorkspaceID: "ws",
 		OpenCodeGoAuthCookie:  "cookie",
 	}
-	client := api.NewOpenCodeClient(nil)
+	client := &stubOpenCodeClient{err: errors.New("fetch failed")}
 	tr := tracker.NewOpenCodeTracker(st, nil)
 	ag := NewOpenCodeAgent(client, st, tr, cfg, time.Second, slog.Default(), NewSessionManager(st, "opencode", 60*time.Second, nil))
 
